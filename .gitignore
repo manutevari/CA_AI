@@ -1,0 +1,16 @@
+node_modules
+.next
+out
+dist
+.env
+.env.*
+!.env.example
+data/uploads
+__pycache__
+*.py[cod]
+.pytest_cache
+.ruff_cache
+.venv
+pgdata
+uploads
+.DS_Store

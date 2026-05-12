@@ -1,0 +1,46 @@
+Streamlit Community Cloud — deploy TaxPilot AI (Streamlit UI)
+=============================================================
+
+This repo is ready for Streamlit Cloud using the **root** Python entry and dependencies.
+
+Checklist
+---------
+1) Push the repository to GitHub (public or private with Streamlit Cloud access).
+
+2) Go to https://share.streamlit.io → **New app**.
+
+3) Pick repository + branch.
+
+4) **Main file path:** `app.py`  
+   (Streamlit executes this file; it imports `form16_parser.py`, `tax_engine.py`, etc. from the repo root.)
+
+5) **Advanced settings → Python version:** leave default, or rely on `runtime.txt` (`python-3.12`).
+
+6) Deploy. Cloud will:
+   - `pip install -r requirements.txt` from the **repository root**
+   - install Debian packages listed in **`packages.txt`** (includes `tesseract-ocr` for OCR)
+
+7) Your app URL will be `https://<slug>.streamlit.app` (chosen in the Cloud UI).
+
+Files Cloud cares about (root)
+-------------------------------
+- `app.py` — Streamlit entrypoint
+- `requirements.txt` — Streamlit + PDF/OCR stack only (kept small on purpose)
+- `packages.txt` — system packages (Tesseract)
+- `runtime.txt` — optional Python pin (`python-3.12`). Remove if Cloud rejects it.
+- `.streamlit/config.toml` — server/theme (max upload size, headless, etc.)
+
+Secrets (optional)
+------------------
+In the Cloud UI: **Settings → Secrets** → create `secrets.toml` if you later add API keys from the UI.
+
+Monorepo note
+-------------
+`backend/` and `frontend/` are **not** used by Streamlit Cloud unless you change the main file and requirements.
+Keeping the Streamlit app at the repo root avoids Cloud trying to install the full FastAPI/Celery stack.
+
+Troubleshooting
+---------------
+- Build fails on `runtime.txt`: delete `runtime.txt` and set Python version only in the Cloud UI.
+- OCR errors: ensure `packages.txt` still lists `tesseract-ocr` (Cloud builders are Debian-based).
+- RHDA / IDE “package not installed”: install root `requirements.txt` into your venv or enable “Use Python Virtual Environment” in RHDA settings.
