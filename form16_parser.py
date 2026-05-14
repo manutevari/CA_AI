@@ -1,25 +1,28 @@
-"""Heuristic Form 16 Part B extraction with pandas + pydantic models."""
+"""Heuristic Form 16 Part B text extraction from PDF text / OCR dump."""
 
 from __future__ import annotations
 
 import hashlib
 import io
 import re
+from dataclasses import dataclass, field
+from typing import Any
 
-import pandas as pd
-
-from models import Form16Extract
-
-
-PAN_RE = re.compile(r"\b([A-Z]{5}\d{4}[A-Z])\b", re.IGNORECASE)
+import pdfplumber
 
 
-def _money(val: object) -> float:
-    if isinstance(val, (int, float)):
-        return float(val)
-    cleaned = re.sub(r"[^\d.\-]", "", str(val))
+PAN_RE = re.compile(
+    r"\b([A-Z]{5}\d{4}[A-Z])\b",
+    re.IGNORECASE,
+)
+
+
+def _money(s: str) -> float:
+    cleaned = re.sub(r"[^\d.\-]", "", s)
+    if not cleaned:
+        return 0.0
     try:
-        return float(cleaned) if cleaned else 0.0
+        return float(cleaned)
     except ValueError:
         return 0.0
 
@@ -31,16 +34,40 @@ def _find_amount_after_labels(text: str, labels: list[str]) -> float | None:
         if idx == -1:
             continue
         window = text[idx : idx + 400]
+        # Last rupee-like number in window often is amount
         nums = re.findall(r"[\d,]+\.?\d*", window)
         if nums:
             return _money(nums[-1])
     return None
 
 
+@dataclass
+class Form16Extract:
+    pan: str | None = None
+    employer_name: str | None = None
+    employee_name: str | None = None
+    gross_salary: float = 0.0
+    tds_deducted: float = 0.0
+    total_80c: float = 0.0
+    raw_text_sample: str = ""
+    parse_warnings: list[str] = field(default_factory=list)
+    sha256: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "pan": self.pan,
+            "employer_name": self.employer_name,
+            "employee_name": self.employee_name,
+            "gross_salary": self.gross_salary,
+            "tds_deducted": self.tds_deducted,
+            "total_80c": self.total_80c,
+            "parse_warnings": self.parse_warnings,
+            "sha256": self.sha256,
+        }
+
+
 def extract_text_from_pdf_bytes(data: bytes) -> tuple[str, str]:
     """Returns (concatenated text, sha256 hex)."""
-    import pdfplumber
-
     h = hashlib.sha256(data).hexdigest()
     parts: list[str] = []
     with pdfplumber.open(io.BytesIO(data)) as pdf:
@@ -51,50 +78,54 @@ def extract_text_from_pdf_bytes(data: bytes) -> tuple[str, str]:
 
 
 def parse_form16_text(text: str, file_hash: str) -> Form16Extract:
-    """Parse Form 16 text into a validated Pydantic model using pandas heuristics."""
-
-    lines = text.splitlines()
-    df = pd.DataFrame({"line": lines, "lower": [ln.lower() for ln in lines]})
+    out = Form16Extract(raw_text_sample=text[:4000], sha256=file_hash)
 
     pans = PAN_RE.findall(text)
-    pan = pans[0].upper() if pans else None
+    if pans:
+        out.pan = pans[0].upper()
 
     gs = _find_amount_after_labels(
         text,
-        ["gross salary", "gross total income", "total gross", "aggregate salary", "salary as per"],
+        [
+            "gross salary",
+            "gross total income",
+            "total gross",
+            "aggregate salary",
+            "salary as per",
+        ],
     )
+    if gs is not None:
+        out.gross_salary = gs
+    else:
+        out.parse_warnings.append("Could not confidently locate gross salary; defaulting to 0.")
+
     tds = _find_amount_after_labels(
         text,
-        ["total amount of tax deducted", "tds deducted", "tax deducted at source", "aggregate of tax deducted"],
+        [
+            "total amount of tax deducted",
+            "tds deducted",
+            "tax deducted at source",
+            "aggregate of tax deducted",
+        ],
     )
-    c80 = _find_amount_after_labels(text, ["deduction under chapter vi", "80c", "section 80c", "eightyc"])
+    if tds is not None:
+        out.tds_deducted = tds
 
-    warnings: list[str] = []
-    if gs is None:
-        warnings.append("Could not confidently locate gross salary; defaulting to 0.")
-    if tds is None:
-        warnings.append("Could not confidently locate TDS; defaulting to 0.")
-
-    employee_name: str | None = None
-    employer_name: str | None = None
-    for line in lines[:80]:
-        low = line.lower()
-        if "employee" in low and ":" in line:
-            employee_name = line.split(":", 1)[-1].strip()[:120]
-        if "employer" in low and "tan" not in low and ":" in line:
-            employer_name = line.split(":", 1)[-1].strip()[:120]
-
-    return Form16Extract(
-        pan=pan,
-        employee_name=employee_name,
-        employer_name=employer_name,
-        gross_salary=gs or 0.0,
-        tds_deducted=tds or 0.0,
-        total_80c=min(c80 or 0.0, 150_000),
-        raw_text_sample=text[:4000],
-        parse_warnings=warnings,
-        sha256=file_hash,
+    c80 = _find_amount_after_labels(
+        text,
+        ["deduction under chapter vi", "80c", "section 80c", "eightyc"],
     )
+    if c80 is not None:
+        out.total_80c = min(c80, 150_000)
+
+    # Names: very heuristic
+    for line in text.splitlines()[:80]:
+        if "employee" in line.lower() and ":" in line:
+            out.employee_name = line.split(":", 1)[-1].strip()[:120]
+        if "employer" in line.lower() and "tan" not in line.lower() and ":" in line:
+            out.employer_name = line.split(":", 1)[-1].strip()[:120]
+
+    return out
 
 
 def parse_form16_pdf(data: bytes) -> Form16Extract:
@@ -102,11 +133,11 @@ def parse_form16_pdf(data: bytes) -> Form16Extract:
     return parse_form16_text(text, h)
 
 
-def ocr_pdf_page_images(data: bytes, max_pages: int = 3, dpi: int = 200) -> str:
+def ocr_pdf_page_images(data: bytes, max_pages: int = 3) -> str:
     """Rasterize first pages with PyMuPDF and OCR — requires Tesseract on PATH."""
     import pytesseract
     from PIL import Image
-    import fitz
+    import fitz  # PyMuPDF
 
     doc = fitz.open(stream=data, filetype="pdf")
     chunks: list[str] = []
@@ -114,7 +145,7 @@ def ocr_pdf_page_images(data: bytes, max_pages: int = 3, dpi: int = 200) -> str:
         n = min(max_pages, doc.page_count)
         for i in range(n):
             page = doc.load_page(i)
-            pix = page.get_pixmap(dpi=dpi)
+            pix = page.get_pixmap(dpi=200)
             img = Image.open(io.BytesIO(pix.tobytes("png")))
             chunks.append(pytesseract.image_to_string(img))
     finally:

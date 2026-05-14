@@ -5,8 +5,10 @@ This repository contains a **production-oriented scaffold** for **TaxPilot AI**:
 ## What is included
 
 - **Frontend:** Next.js 15 (App Router), TypeScript, TailwindCSS, Framer Motion, minimal shadcn-style `Button`, dashboard + wizard shells.
-- **Backend:** FastAPI, SQLAlchemy models for core tables, JWT auth, encrypted local document storage (Fernet), OCR/PDF extraction + optional OpenAI/LangChain structured extraction, tax/regime/validation/deduction services, Celery worker hook, OpenAPI at `/docs`.
+- **Backend:** FastAPI, SQLAlchemy models for core tables, JWT auth, encrypted local document storage (Fernet), OCR/PDF extraction + optional OpenAI/LangChain structured extraction, tax/regime/validation/deduction services, agentic filing readiness runs, CA review checkpoints, Celery worker hook, OpenAPI at `/docs`.
+- **Agentic workflow:** `/api/v1/agent/filings/{filing_id}/run` creates an auditable filing assessment with deterministic graph steps, confidence scoring, correction proposals, AIS/26AS mismatch checks, CBDT schema blockers, and human-in-the-loop review tasks.
 - **Data:** PostgreSQL schema via `Base.metadata.create_all` (swap to Alembic for real migrations).
+- **Compliance artifacts:** `docs/DPDP_COMPLIANCE.md` starts the DPDP consent, retention, erasure, and DPIA artifact set.
 - **Infra:** `docker-compose.yml` (Postgres, Redis, API, worker, web), GitHub Actions CI, `.env.example`.
 
 ## Streamlit Community Cloud (hosted UI)
@@ -48,6 +50,29 @@ curl -s -X POST http://localhost:8000/api/v1/auth/register   -H "Content-Type: a
 
 Use returned `access_token` as `Authorization: Bearer ...` for protected routes (`/filings`, `/documents/...`, `/tax/compute`, etc.).
 
+Run an agent readiness assessment:
+
+```bash
+curl -s -X POST http://localhost:8000/api/v1/agent/filings/<filing_id>/run \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <access_token>" \
+  -d "{\"objective\":\"Assess filing readiness with reconciliation and compliance gates\"}"
+```
+
+Review checkpoints are available at:
+
+```bash
+curl -s http://localhost:8000/api/v1/agent/filings/<filing_id>/review-checkpoints \
+  -H "Authorization: Bearer <access_token>"
+```
+
+CA/admin bulk review queue:
+
+```bash
+curl -s http://localhost:8000/api/v1/agent/review-checkpoints?status_filter=pending \
+  -H "Authorization: Bearer <access_token>"
+```
+
 ### Promote a user to admin (SQL)
 
 ```bash
@@ -58,18 +83,15 @@ docker compose exec postgres psql -U taxpilot -d taxpilot -c "UPDATE users SET r
 
 The Streamlit app (`app.py` + `tax_engine.py`, `form16_parser.py`, …) is the **Streamlit Cloud–deployable** surface. The CLI remains `python main.py <form16.pdf>`.
 
-## Roadmap (not yet fully implemented)
+## Production gates still required
 
-Official ITR XML schema generation, e-filing integration, AIS/26AS reconciliation engine, production S3 + KMS, WhatsApp provider, voice (ASR/TTS), CSC dashboards, bulk CA mode, full RAG ingestion of circulars, surcharge/marginal relief completeness, and DPDP DPIA artifacts.
+The repo now includes a first-pass agentic workflow, confidence scoring, review checkpoints, AIS/26AS comparison fields, and surcharge/marginal relief computation hooks. It still intentionally blocks production filing until these are completed and independently reviewed:
+
+- Official CBDT JSON/XML schema generation and validator certification.
+- Direct Income Tax portal filing integration with explicit taxpayer authorization.
+- Production AIS/26AS/TRACES ingestion rather than user-supplied values.
+- Alembic migrations, production object storage with KMS, and formal DPDP DPIA/retention artifacts.
+- Full CA workspace with client assignment, delegation, maker-checker controls, and bulk review queues.
+- Continuous legal rule-pack updates from official sources, including Income Tax Department slab pages and CBDT validation rule PDFs.
 
 See `docs/ARCHITECTURE.md` for diagrams and extension points.
-
-## Compliance status (honest checklist)
-
-| Area | Status |
-|------|--------|
-| Enterprise compliance | **Not yet** — policies, certifications, and org controls are not implemented as a finished program. |
-| Production hardening | **Not yet** — defaults are suitable for demos; add threat modeling, DR, observability, and secrets management for real workloads. |
-| Legal e-filing completeness | **Not yet** — not CBDT-certified output; users must not treat exports as filed returns. |
-
-**Preview:** locally — Streamlit `http://localhost:8501`, web `http://localhost:3000`, API `http://localhost:8000/docs`. Hosted Streamlit URL comes from [Streamlit Cloud](https://share.streamlit.io) after you deploy (see `DEPLOY.txt`).
