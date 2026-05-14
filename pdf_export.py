@@ -9,8 +9,7 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import cm
 from reportlab.pdfgen import canvas
 
-from form16_parser import Form16Extract
-from tax_engine import TaxResult
+from models import Form16Extract, TaxResult
 
 
 def build_summary_pdf(
@@ -28,8 +27,7 @@ def build_summary_pdf(
     y -= 0.8 * cm
     c.setFont("Helvetica", 9)
     c.drawString(
-        2 * cm,
-        y,
+        2 * cm, y,
         f"Generated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')} — Not for official filing.",
     )
     y -= 1.2 * cm
@@ -74,8 +72,7 @@ def build_summary_pdf(
     y -= 0.8 * cm
     c.setFont("Helvetica-Oblique", 8)
     c.drawString(
-        2 * cm,
-        y,
+        2 * cm, y,
         "Disclaimer: Demo tool only. Verify with a qualified tax professional before filing.",
     )
     c.showPage()

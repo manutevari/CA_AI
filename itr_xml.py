@@ -5,8 +5,7 @@ from __future__ import annotations
 import xml.etree.ElementTree as ET
 from xml.dom import minidom
 
-from form16_parser import Form16Extract
-from tax_engine import TaxResult
+from models import Form16Extract, TaxResult
 
 
 def build_itr1_demo_xml(
