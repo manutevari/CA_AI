@@ -5,6 +5,8 @@ This repository contains a **production-oriented scaffold** for **TaxPilot AI**:
 ## What is included
 
 - **Frontend:** Next.js 15 (App Router), TypeScript, TailwindCSS, Framer Motion, minimal shadcn-style `Button`, dashboard + wizard shells.
+- **Streamlit filing lab:** root `app.py` includes official Income Tax Department filing links, ITR form recommendation, online filing entry points, and official download utility links.
+- **Dynamic agent providers:** Streamlit can route official-source search to Tavily and review reasoning to DeepSeek, Groq, or Hugging Face based on configured secrets.
 - **Backend:** FastAPI, SQLAlchemy models for core tables, JWT auth, encrypted local document storage (Fernet), OCR/PDF extraction + optional OpenAI/LangChain structured extraction, tax/regime/validation/deduction services, agentic filing readiness runs, CA review checkpoints, Celery worker hook, OpenAPI at `/docs`.
 - **Agentic workflow:** `/api/v1/agent/filings/{filing_id}/run` creates an auditable filing assessment with deterministic graph steps, confidence scoring, correction proposals, AIS/26AS mismatch checks, CBDT schema blockers, and human-in-the-loop review tasks.
 - **Data:** PostgreSQL schema via `Base.metadata.create_all` (swap to Alembic for real migrations).
@@ -23,6 +25,33 @@ The **Streamlit** filing lab runs from the **repository root** (not from `backen
 Details, troubleshooting, and file list: **`DEPLOY.txt`**.
 
 After deploy, your preview URL is shown in the Streamlit dashboard (typically `https://<app-name>.streamlit.app`).
+
+### Optional Streamlit secrets for dynamic agents
+
+Set these in **Streamlit Community Cloud -> App -> Settings -> Secrets**. The app chooses providers dynamically and never displays secret values.
+
+```toml
+TAVILY_KEY = ""
+tavily_key = ""
+HF_API_KEY = ""
+HF_MODEL = "mistralai/Mistral-7B-Instruct-v0.3"
+HF_CHAT_ENDPOINT = ""
+DEEPSEEK_API_KEY = ""
+DEEPSEEK_MODEL = "deepseek-chat"
+GROQ_API_KEY = ""
+GROQ_MODEL = "llama-3.1-8b-instant"
+MISTRAL_API_KEY = ""
+MISTRAL_MODEL = "mistral-small-latest"
+```
+
+Provider selection:
+
+- Tavily: official Income Tax source search.
+- DeepSeek: first-choice deeper tax review notes when configured.
+- Groq: low-latency review notes when DeepSeek is absent.
+- Mistral: review notes when DeepSeek/Groq are absent.
+- Hugging Face: fallback model provider, with `HF_CHAT_ENDPOINT` supported for dedicated endpoints.
+- Deterministic rules: always available when no model/search key is configured.
 
 ## Quick start (Docker)
 

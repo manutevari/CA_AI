@@ -7,8 +7,20 @@ from __future__ import annotations
 
 import streamlit as st
 
+from agent_provider import provider_status
+from agent_readiness import assess_filing_readiness
 from form16_parser import Form16Extract, extract_text_from_pdf_bytes, ocr_pdf_page_images, parse_form16_text
 from itr_xml import build_itr1_demo_xml
+from official_itr_forms import (
+    CURRENT_ONLINE_FORMS,
+    EFILE_HOME_URL,
+    EFILE_LOGIN_URL,
+    LATEST_DOWNLOAD_UTILITIES,
+    NOTIFIED_FORMS_URL,
+    OFFICIAL_DOWNLOADS_URL,
+    OFFICIAL_ONLINE_ITR_URL,
+    recommend_itr_form,
+)
 from pdf_export import build_summary_pdf
 from tax_engine import TaxInputs, compare_regimes
 
@@ -20,6 +32,66 @@ st.caption(
     "and a demo ITR-1-style XML. **Not legal or tax advice.** "
     "Full-stack product scaffold lives in `backend/` + `frontend/` (Docker)."
 )
+
+with st.expander("Official ITR forms, download utilities, and online filing", expanded=True):
+    st.markdown(
+        "Official filing must happen through the Income Tax Department portal or its official utilities. "
+        "For FY 2025-26 income, select **AY 2026-27** on the portal. The portal currently exposes online "
+        "filing help for AY 2026-27 and downloadable offline utilities on the official downloads page."
+    )
+    q1, q2, q3 = st.columns(3)
+    with q1:
+        form_total_income = st.number_input("Expected total income for form check (₹)", min_value=0.0, value=0.0, step=50000.0)
+    with q2:
+        form_has_business = st.checkbox("Business / profession income", value=False)
+        form_presumptive = st.checkbox("Eligible presumptive income", value=False, disabled=not form_has_business)
+    with q3:
+        form_has_capital_gains = st.checkbox("Capital gains beyond ITR-1 scope", value=False)
+    recommended_form = recommend_itr_form(
+        has_business_income=form_has_business,
+        presumptive_taxation=form_presumptive,
+        has_capital_gains=form_has_capital_gains,
+        total_income=form_total_income,
+    )
+    st.success(f"Suggested starting form: {recommended_form}. Confirm eligibility on the official portal before filing.")
+
+    action_cols = st.columns(4)
+    action_cols[0].link_button("Fill online", EFILE_LOGIN_URL, use_container_width=True)
+    action_cols[1].link_button("ITR online help", OFFICIAL_ONLINE_ITR_URL, use_container_width=True)
+    action_cols[2].link_button("Download utilities", OFFICIAL_DOWNLOADS_URL, use_container_width=True)
+    action_cols[3].link_button("Notified form PDFs", NOTIFIED_FORMS_URL, use_container_width=True)
+
+    st.write("**Forms for online filing**")
+    for form in CURRENT_ONLINE_FORMS:
+        with st.container(border=True):
+            left, right = st.columns([3, 1])
+            left.markdown(f"**{form.form} - {form.title}**")
+            left.caption(form.applies_to)
+            if form.notes:
+                left.info(form.notes)
+            if form.online_help_url:
+                right.link_button("Open", form.online_help_url, use_container_width=True)
+
+    st.write("**Latest official download utilities listed by portal**")
+    for form in LATEST_DOWNLOAD_UTILITIES:
+        with st.container(border=True):
+            left, right = st.columns([3, 1])
+            left.markdown(f"**{form.form} - {form.title}**")
+            left.caption(form.applies_to)
+            if form.latest_release:
+                left.write(f"Latest release shown on portal: {form.latest_release}")
+            if form.notes:
+                left.caption(form.notes)
+            if form.download_url:
+                right.link_button("Download", form.download_url, use_container_width=True)
+            if form.schema_url:
+                right.link_button("Schema", form.schema_url, use_container_width=True)
+
+    st.warning(
+        "This app can help prepare and review data, but it does not replace official CBDT schema validation, "
+        "portal submission, e-verification, or CA/tax professional review."
+    )
+    st.caption(f"Official e-filing forms landing page: {EFILE_HOME_URL}")
 
 uploaded = st.file_uploader("Form 16 (PDF)", type=["pdf"])
 force_ocr = st.checkbox(
@@ -38,6 +110,26 @@ with col_b:
         value=0.0,
         step=5000.0,
         help="If Form 16 parsing misses deductions, enter manually.",
+    )
+
+with st.expander("Dynamic agent provider routing", expanded=False):
+    st.caption(
+        "The agent reads keys from Streamlit secrets or environment variables and chooses the provider by task. "
+        "Secret values are never displayed."
+    )
+    st.dataframe(provider_status(), use_container_width=True, hide_index=True)
+    p1, p2 = st.columns(2)
+    with p1:
+        enable_live_search = st.checkbox("Use Tavily for live official-source search", value=False)
+        ais_tds_raw = st.number_input("AIS TDS credit (optional)", min_value=0.0, value=0.0, step=500.0)
+        form26as_tds_raw = st.number_input("Form 26AS TDS credit (optional)", min_value=0.0, value=0.0, step=500.0)
+    with p2:
+        enable_llm_reasoning = st.checkbox("Use best configured LLM for review notes", value=False)
+        official_schema_validation_passed = st.checkbox("Official CBDT schema validation passed", value=False)
+        portal_submission_authorized = st.checkbox("Taxpayer portal filing authorization recorded", value=False)
+    st.code(
+        "TAVILY_KEY or tavily_key\nHF_API_KEY\nDEEPSEEK_API_KEY\nGROQ_API_KEY\nMISTRAL_API_KEY",
+        language="text",
     )
 
 if uploaded is not None:
@@ -126,6 +218,60 @@ if uploaded is not None:
             }
         )
 
+    regime_pick = st.radio(
+        "Regime for demo XML and agent review",
+        options=["new", "old"],
+        index=0 if rec == "new" else 1,
+        horizontal=True,
+    )
+    chosen = new_r if regime_pick == "new" else old_r
+
+    readiness = assess_filing_readiness(
+        form16=merged,
+        selected_regime=regime_pick,
+        chosen_tax=chosen,
+        other_income=other_income,
+        hra_exemption=hra_exemption,
+        chapter_via=merged.total_80c,
+        ais_tds=ais_tds_raw if ais_tds_raw > 0 else None,
+        form26as_tds=form26as_tds_raw if form26as_tds_raw > 0 else None,
+        official_schema_validation_passed=official_schema_validation_passed,
+        portal_submission_authorized=portal_submission_authorized,
+        enable_live_search=enable_live_search,
+        enable_llm_reasoning=enable_llm_reasoning,
+    )
+
+    st.subheader("Agentic filing readiness")
+    a1, a2, a3 = st.columns(3)
+    a1.metric("Readiness status", readiness["status"].replace("_", " ").title())
+    a2.metric("Confidence", f"{readiness['confidence']:.0%}")
+    a3.metric("Review checkpoints", len(readiness["review_checkpoints"]))
+    st.progress(readiness["confidence"])
+
+    tab_plan, tab_findings, tab_providers, tab_actions = st.tabs(["Plan", "Findings", "Providers", "Next actions"])
+    with tab_plan:
+        st.dataframe(readiness["plan"], use_container_width=True, hide_index=True)
+    with tab_findings:
+        if readiness["findings"]:
+            st.dataframe(readiness["findings"], use_container_width=True, hide_index=True)
+        else:
+            st.success("No deterministic rule findings in this demo assessment.")
+        if readiness["corrections"]:
+            st.write("**Correction proposals**")
+            st.json(readiness["corrections"])
+    with tab_providers:
+        st.write("**Chosen providers**")
+        st.json(readiness["provider_choices"])
+        if readiness["live_search"]:
+            st.write("**Tavily official-source search**")
+            st.json(readiness["live_search"])
+        if readiness["llm_review"]:
+            st.write("**LLM review notes**")
+            st.json(readiness["llm_review"])
+    with tab_actions:
+        for action in readiness["next_actions"]:
+            st.warning(action)
+
     pdf_bytes = build_summary_pdf(merged, new_r, old_r, recommended="new" if rec == "new" else "old")
     st.download_button(
         "Download summary PDF",
@@ -134,10 +280,6 @@ if uploaded is not None:
         mime="application/pdf",
     )
 
-    regime_pick = st.radio(
-        "Regime for demo XML", options=["new", "old"], index=0 if rec == "new" else 1, horizontal=True
-    )
-    chosen = new_r if regime_pick == "new" else old_r
     xml_text = build_itr1_demo_xml(merged, chosen)
     st.download_button(
         "Download demo ITR-1-style XML",
